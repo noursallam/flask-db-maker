@@ -16,36 +16,40 @@ class User(db.Model):
     db_name = db.Column(db.String(120), unique=True, nullable=False)
 
 # Function to create a new database for each user and insert initial data
+# Function to create a new database for each user and insert initial data
 def create_user_database(username):
-    # Create a new app and database for the user
     db_name = f"user_{username}.db"
     
-    # Create the database file
     user_app = Flask(f"user_app_{username}")
     user_app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_name}'
     user_db = SQLAlchemy(user_app)
     
-    # Create a simple table in user's database
-    class UserData(user_db.Model):
-        id = user_db.Column(user_db.Integer, primary_key=True)
-
     class Note(user_db.Model):
         id = user_db.Column(user_db.Integer, primary_key=True)
         note = user_db.Column(user_db.String(200), default="this data from user's database")    
     
-    # Create the database and tables
     with user_app.app_context():
         user_db.create_all()
         
-        # Insert initial data (dump data) into the Note table
-        initial_note = Note(note="Welcome to your personal database!")
-        user_db.session.add(initial_note)
-        user_db.session.commit()
+        # التأكد من عدم وجود بيانات قبل الإضافة
+        if not Note.query.first():
+            initial_note = Note(note="Welcome to your personal database!")
+            user_db.session.add(initial_note)
+            user_db.session.commit()
     
     return db_name
 
+
+# Function to remove users whose database files are missing
+def remove_users_with_missing_databases():
+    users = User.query.all()
+    for user in users:
+        if not os.path.exists(user.db_name):
+            db.session.delete(user)
+    db.session.commit()
+
+# Function to get user notes from their database
 def get_user_note(username):
-    # Create a temporary connection to user's database to get the note
     user_app = Flask(f"user_app_{username}")
     user_app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///user_{username}.db'
     user_db = SQLAlchemy(user_app)
@@ -61,42 +65,32 @@ def get_user_note(username):
 # Login/Register page
 @app.route('/', methods=['GET', 'POST'])
 def login():
+    remove_users_with_missing_databases()  # Remove users with missing databases
+    
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
         
-        # Check if user exists
         user = User.query.filter_by(username=username).first()
         
         if user:
-            # Login
             if user.password == password:
                 session['username'] = username
                 session['db_name'] = user.db_name
                 return redirect(url_for('dashboard'))
             return "Wrong password!"
         else:
-            # Register new user
             try:
-                # Create user's database
                 db_name = create_user_database(username)
-                
-                # Add user to main database
-                new_user = User(username=username, 
-                              password=password,
-                              db_name=db_name)
+                new_user = User(username=username, password=password, db_name=db_name)
                 db.session.add(new_user)
                 db.session.commit()
-                
-                # Save to session
                 session['username'] = username
                 session['db_name'] = db_name
-                
                 return redirect(url_for('dashboard'))
             except Exception as e:
                 return f"Error creating account: {str(e)}"
     
-    # Show login page
     return render_template_string("""
         <h1>Login or Register</h1>
         <form method="POST">
@@ -112,7 +106,6 @@ def dashboard():
     if 'username' not in session:
         return redirect(url_for('login'))
     
-    # Get the user's note from their database
     user_note = get_user_note(session['username'])
     
     return render_template_string("""
@@ -128,9 +121,7 @@ def logout():
     session.clear()
     return redirect(url_for('login'))
 
-# Run the app
 if __name__ == "__main__":
-    # Create the main database tables
     with app.app_context():
         db.create_all()
     
